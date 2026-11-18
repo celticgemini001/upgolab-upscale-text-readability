@@ -357,7 +357,149 @@ same window captured at 144 dpi instead of 72 dpi has twice the x-height in pixe
 readability line for all its body text, and needs no upscaling at all — and it is a 4× larger file
 for 4× the pixels, exactly like any other genuine resolution increase.</p>
 
-<h2>8. What I did not measure</h2>
+<h2>8. The subpixel fringe: the one thing a greyscale conversion destroys</h2>
+
+<p>Everything above treated the text as a grey image. Real text on an LCD is not grey: the panel has
+three vertical stripes per pixel, and the renderer drives them separately so that a stem landing
+between two pixel centres can be placed a third of a pixel more precisely. The cost is colour —
+a magenta or green edge on every vertical stroke. That fringe is the highest-frequency thing in a
+screenshot, and it behaves completely differently from a grey edge under upscaling. I modelled it
+geometrically rather than trusting a rasteriser, because a font rasteriser applies hinting that
+snaps stems to the pixel grid and would hide the effect it is supposed to show.</p>
+
+<p>The model is one line of clipping. Each channel integrates the glyph coverage over a window
+shifted by a third of a pixel, so a stem at fractional position <code>x</code> covers different
+fractions of red, green and blue:</p>
+
+<pre><code>D = {'R': -1/3, 'G': 0.0, 'B': +1/3}
+
+def cov1d(n, x, w, d):              # coverage of pixel i by stem [x, x+w)
+    i = np.arange(n, dtype=float)
+    return np.clip(np.minimum(i + 1 + d, x + w) - np.maximum(i + d, x), 0, 1)
+
+def stem(n, x, w, bg=255.0, fg=0.0):        # (n, 3) RGB image of a vertical stem
+    return np.stack([bg + (fg - bg) * cov1d(n, x, w, D[c]) for c in 'RGB'], axis=-1)
+
+def fringe(img):                     # how far from grey each pixel is, 0..255
+    return np.abs(img[..., 0] - img[..., 2])</code></pre>
+
+<h3>The amplitude is a fixed fraction of contrast, and stroke weight is irrelevant</h3>
+
+<p>I swept stroke width from 1.0 to 4.0 px at five contrast levels. The peak fringe never moves with
+width. It tracks contrast exactly, at two-thirds of the luminance step — which is what the geometry
+predicts, since the outermost channels are offset by ±1/3 px from the middle one and the
+worst-case stem straddles both:</p>
+
+<table>
+<thead><tr><th>Contrast (bg−fg)/255</th><th>1.0 px stem</th><th>1.3 px</th><th>2.0 px</th><th>4.0 px</th><th>Predicted ⅔·contrast</th></tr></thead>
+<tbody>
+<tr><td>1.00</td><td>170.0</td><td>170.0</td><td>170.0</td><td>170.0</td><td>170.0</td></tr>
+<tr><td>0.75</td><td>127.3</td><td>127.3</td><td>127.3</td><td>127.3</td><td>127.3</td></tr>
+<tr><td>0.55</td><td>93.3</td><td>93.3</td><td>93.3</td><td>93.3</td><td>93.3</td></tr>
+<tr><td>0.50</td><td>84.7</td><td>84.7</td><td>84.7</td><td>84.7</td><td>84.7</td></tr>
+<tr><td>0.03</td><td>5.3</td><td>5.3</td><td>5.3</td><td>5.3</td><td>5.3</td></tr>
+</tbody>
+</table>
+
+<p>What does move it is the subpixel phase — where the stem sits between two pixel centres. At
+full contrast a 1.3 px stem gives 161.5 levels at <code>x = 6.000</code>, the full 170.0 anywhere in
+<code>x = 6.125…6.625</code>, and 129.6 at <code>x = 6.875</code>. It never reaches zero for an
+arbitrary position, so real subpixel text always fringes somewhere; you cannot pick a font size
+that avoids it, only a size where fewer stems land at bad phases.</p>
+
+<p>Two structural facts fall out. At the worst pixel the channels read R 212.5, G 127.5, B 42.5 —
+luma 139.4. The pixel is 170 levels of chroma away from grey while its luminance is unremarkable,
+which is why the fringe is invisible to any grey-domain metric. And a <em>horizontal</em> edge
+fringes 0.0 levels, because the stripes are columns: only the horizontally-varying part of a glyph
+carries it. Vertical stems fringe; horizontal bars cannot.</p>
+
+<h3>Per-channel upscaling multiplies the fringe area, and buys nothing</h3>
+
+<p>Every ordinary resizer, and every one I tested, filters each channel independently. Applied to
+subpixel text that has a specific and unpleasant effect: the peak stays put — the fringe is
+preserved — but the number of columns it occupies grows with the filter kernel. The stem goes from
+3 columns with |R−B| &gt; 2 to 9 at 2× and 16 at 4×, while a natively-rendered stem at target size
+has 3 and 4. Total fringe energy, summed over the stem, comes out at 190.3% of ground truth at 2×
+and 370.0% at 4×:</p>
+
+<table>
+<thead><tr><th>Factor</th><th>Peak src</th><th>Peak upscaled</th><th>Peak truth</th><th>Fringe area vs truth</th><th>Columns &gt; 2 lv (src / up / truth)</th><th>RMSE</th></tr></thead>
+<tbody>
+<tr><td>2×</td><td>170.0</td><td>166.0</td><td>170.0</td><td>190.3%</td><td>3 / 9 / 3</td><td>18.93</td></tr>
+<tr><td>4×</td><td>170.0</td><td>176.0</td><td>166.6</td><td>370.0%</td><td>3 / 16 / 4</td><td>25.25</td></tr>
+</tbody>
+</table>
+
+<p>On real DejaVu glyphs the same thing happens with larger numbers, because a text line has
+dozens of stems: rendering <code>Handle 8472</code> at 12 px and upscaling 2× gives 154,810 units of
+fringe against 83,082 for the same string rendered natively at 24 px — 186.3% — and at 16 px it is
+216.3%. In grey terms the two arms are nearly identical (RMSE 0.15 and 0.17 levels), which is
+exactly the trap: by any luminance metric the upscale looks perfect while the colour error has
+nearly doubled.</p>
+
+<h3>But it does not make the text more readable</h3>
+
+<p>This is where I expected the fringe to pay off, and it mostly does not. I scored the 36-class
+matcher against templates rendered <em>natively at the target size</em>, so the ceiling is 100% by
+construction and every pipeline is judged on the same fixed reference. Sweeping the source font
+from 5 px to 14 px:</p>
+
+<table>
+<thead><tr><th>Source font</th><th>Source cell</th><th>Subpixel → 2× lanczos</th><th>Greyscale → 2×</th><th>Delta</th></tr></thead>
+<tbody>
+<tr><td>5 px</td><td>6×7</td><td>77.8%</td><td>47.2%</td><td><strong>+30.6</strong></td></tr>
+<tr><td>6 px</td><td>6×8</td><td>86.1%</td><td>75.0%</td><td>+11.1</td></tr>
+<tr><td>7 px</td><td>6×9</td><td>83.3%</td><td>88.9%</td><td>−5.6</td></tr>
+<tr><td>8 px</td><td>7×10</td><td>97.2%</td><td>100.0%</td><td>−2.8</td></tr>
+<tr><td>9 px</td><td>8×11</td><td>94.4%</td><td>94.4%</td><td>0.0</td></tr>
+<tr><td>10 px</td><td>8×12</td><td>100.0%</td><td>97.2%</td><td>+2.8</td></tr>
+<tr><td>12 px</td><td>9×14</td><td>100.0%</td><td>100.0%</td><td>0.0</td></tr>
+<tr><td>14 px</td><td>11×16</td><td>100.0%</td><td>100.0%</td><td>0.0</td></tr>
+</tbody>
+</table>
+
+<p>The fringe is worth a real 30.6 points, but only at 5 px font — a size where the greyscale
+pipeline is already failing half the alphabet and where the answer for any practitioner is "capture
+it bigger", not "upscale it". From 9 px up the two pipelines are within 2.8 points of each other,
+and that gap does not replicate across neighbouring sizes (9 px 0.0, 10 px +2.8, 12 px 0.0,
+14 px 0.0), so it is inside the noise of a 36-sample test. The 5 px result is the only one large
+enough to believe, and it is also the only size where nobody should be upscaling in the first
+place. The honest reading is that RGB-stripe information is a rescue for text already at the edge
+of legibility and irrelevant above it. The same sweep at 4× gives +2.8 points at 6 px and nothing
+elsewhere.</p>
+
+<p>One more result that contradicts the framing of this whole article: upscaling subpixel text 2×
+was <em>worse</em> than reading it at 1×, not better. At 6 px source, reading at native size scores
+100.0% and upscaling to 2× scores 86.1% — a 13.9 point loss. At 8 px it is −2.8. The upscale adds
+no pixels that were not inferable from the source, and the filter's ringing costs accuracy that the
+native read did not have to pay. That is the same negative result as §3, arriving from a different
+direction.</p>
+
+<h3>And the fringe is the first thing chroma subsampling kills</h3>
+
+<p>The fringe lives almost entirely in R−B, which is chroma. Encode the subpixel screenshot as JPEG
+at 4:2:0 and it is gone: on the analytic stem, peak |R−B| falls from 170.0 to 16.0 levels at q95 —
+9.4% — and the summed fringe to 16.8%, while 4:4:4 at the same quality keeps 101.8%. On real glyphs
+at 16 px, q95 4:2:0 keeps 38.0% of the peak and 45.6% of the area; q85 4:2:0 gives 39.6% and 49.5%.
+Raising quality does not bring it back, because the information was discarded by the subsampling
+step, not by the quantiser.</p>
+
+<p>So the practical order of operations is forced. If the source is a 4:2:0 JPEG — which is what a
+screenshot pasted through most chat apps and CMS uploads becomes — the subpixel structure was
+already destroyed before you touched it, and there is nothing for an upscaler to preserve. If the
+source is lossless PNG, per-channel upscaling will preserve the fringe but spread it over two to
+four times as many columns, which makes it more visible to a human without making the glyphs more
+legible. The only case where RGB really matters is a lossless capture of text at 5–6 px, where
+converting to grey first costs 11 to 31 points of accuracy. Everywhere else, converting to
+greyscale before upscaling is not a compromise — it is the better pipeline, and it removes a colour
+artefact that was never carrying information a reader could use.</p>
+
+<p>Reproduce any row above with the four functions at the top of this section plus PIL's
+<code>LANCZOS</code> filter applied per channel; the legibility numbers need the <code>render</code>,
+<code>cell_vec</code> and <code>read_accuracy</code> helpers from §2, with templates rendered at
+the target size rather than at the source size. The full sweep is under a second per size.</p>
+
+<h2>9. What I did not measure</h2>
 
 <p>Three honest limits. The matcher is single-font, so the template count is 36 classes with no
 case variation and no confusion between serif and sans — a general OCR engine faces a much harder
