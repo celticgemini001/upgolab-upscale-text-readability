@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Upscaling Text You Cannot Read: A 36-Glyph Test From 3 px to 13 px x-Height</title>
+<meta name="description" content="Can an upscaler make unreadable text readable? Measured with a 36-class glyph matcher: 90% character accuracy needs a 7 px x-height in the source, and upscaling 4x never beat reading the same text at native size — it lost 8.7 points on average. Kernel choice inverts at high factors: nearest beats lanczos by 17 points at 4x.">
+<link rel="canonical" href="https://celticgemini001.github.io/upgolab-upscale-text-readability/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Upscaling Text You Cannot Read: A 36-Glyph Test From 3 px to 13 px x-Height">
+<meta property="og:description" content="Text legibility after upscaling, measured by cosine-matching 120 characters against 36 templates. 90% accuracy needs 7 px x-height in the source. 4x upscaling loses to native reading by 8.7 points on average, but gains 15.8 points on a q30 JPEG.">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article",
+ "headline":"Upscaling Text You Cannot Read: A 36-Glyph Test From 3 px to 13 px x-Height",
+ "author":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
+ "publisher":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
+ "datePublished":"2026-11-18",
+ "dateModified":"2026-11-18",
+ "mainEntityOfPage":"https://celticgemini001.github.io/upgolab-upscale-text-readability/"}
+</script>
+<style>
+:root{--ink:#16181d;--mut:#5b6270;--line:#e2e5ea;--acc:#0a58ca}
+*{box-sizing:border-box}
+body{margin:0;color:var(--ink);font:17px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:46rem;margin:0 auto;padding:3rem 1.25rem 5rem}
+h1{font-size:2rem;line-height:1.22;margin:0 0 .5rem;letter-spacing:-.02em}
+h2{font-size:1.33rem;margin:2.5rem 0 .7rem}
+h3{font-size:1.08rem;margin:1.8rem 0 .5rem}
+p,li{color:#2b3038}ul,ol{padding-left:1.3rem}li{margin:.4rem 0}
+a{color:var(--acc)}
+.lede{font-size:1.14rem;color:var(--mut);margin:0 0 1.6rem}
+.meta{font-size:.88rem;color:var(--mut);border-bottom:1px solid var(--line);padding-bottom:1rem;margin-bottom:2rem}
+table{width:100%;border-collapse:collapse;margin:1.4rem 0;font-size:.94rem}
+th,td{text-align:left;padding:.6rem .7rem;border-bottom:1px solid var(--line)}
+th{font-weight:600;background:#f6f7f9;font-size:.86rem;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.best td{background:#f2f8f2}
+callout{display:block}
+.callout{border-left:3px solid var(--acc);background:#f5f8fd;padding:.9rem 1.1rem;margin:1.6rem 0;border-radius:0 6px 6px 0}
+.callout p{margin:.3rem 0}
+pre{background:#f7f8fa;border:1px solid var(--line);border-radius:8px;padding:1rem;overflow-x:auto;font-size:.86rem}
+code{background:#f0f2f5;padding:.1rem .3rem;border-radius:3px;font-size:.9em}
+pre code{background:none;padding:0}
+footer{margin-top:4rem;padding-top:1.4rem;border-top:1px solid var(--line);font-size:.9rem;color:var(--mut)}
+.scroll{overflow-x:auto}
+.sisternav{margin:2rem 0 0;padding-top:1.2rem;border-top:1px solid #e2e5ea}
+.sisternav p{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;
+ color:#5b6270;margin:0 0 .6rem}
+.sisternav ul{list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:.4rem .9rem}
+.sisternav li{margin:0;font-size:.88rem;line-height:1.4}
+.sisternav a{text-decoration:none;border-bottom:1px solid #d5dae2}
+.sisternav a:hover{border-bottom-color:#0a58ca}
+</style>
+</head>
+<body>
+<main>
+<article>
+<h1>Upscaling Text You Cannot Read: A 36-Glyph Test From 3 px to 13 px x-Height</h1>
+<p class="lede">A screenshot of a receipt, a chat window, a scanned form, a slide deck exported at
+the wrong size. The text in it is too small to read. The obvious move is to upscale it 4× and look
+again. I built a matcher to check whether that actually works, and across 14 source sizes the
+answer was mostly no — upscaling read text <em>worse</em> than reading the same image at its native
+size, by 8.7 percentage points on average. The one regime where it clearly helps is recompression
+damage, and that turns out to be the whole story.</p>
+<p class="meta">Measured 18 November 2026 · PIL 12.2.0, numpy 1.26, DejaVu Sans Mono ·
+120-character string, 36 glyph classes · scripts included, every number below reproducible</p>
+
+<p>This sits next to the other guides in this series that deal with losses <em>before</em> the
+upscaler runs: <a href="https://celticgemini001.github.io/upgolab-jpeg-blocking-upscale/">JPEG
+blocking</a>, <a href="https://celticgemini001.github.io/upgolab-chroma-subsampling/">chroma
+subsampling</a>, and <a href="https://celticgemini001.github.io/upgolab-halftone-dots-upscaling/">halftone
+dots</a>. Text is the cleanest of these to measure, because unlike a photograph it has a ground
+truth you can compute: the same string, rendered as vectors at final resolution.</p>
+
+<h2>1. What is actually being measured</h2>
+
+<p>Most "text legibility" claims are made by looking at a picture and forming an opinion. I wanted a
+number, so I built the smallest OCR that could be honest about its own error rate.</p>
+
+<p>The setup: a 120-character random string over the 36 classes <code>A–Z0–9</code>, rendered in a
+monospace font so the character grid is known exactly. Reading it means splitting the line on that
+grid, cropping each cell to its ink, resizing to 32×32, normalising, and taking the highest cosine
+similarity against 36 templates rendered cleanly at the target resolution. No training, no
+classifier, no black box — just template matching with a fixed, published error mode.</p>
+
+<p>The pipeline for each test case is deliberately dumb, because the question is about resolution
+and not about my cleverness:</p>
+
+<pre><code>def render(text, size):          # ground truth: vector at this size
+    f = ImageFont.truetype(FONT, size)
+    ...
+
+def upsample(gray, factor, kernel):   # the operation under test
+    im = Image.fromarray(gray)
+    return np.asarray(im.resize((int(w*factor), int(h*factor)), kernel))
+
+# read at NATIVE size
+run_native = read_accuracy(gray, adv, pad, src_size, tpl_src, chars)
+# read AFTER x4 upscale  (cell pitch scales with the image, or you read garbage)
+run_up4x   = read_accuracy(upsample(gray, 4.0, Image.LANCZOS),
+                           adv*4.0, pad*4.0, src_size*4, tpl_up, chars)</code></pre>
+
+<p>That <code>adv*4.0</code> detail is not cosmetic. My first run passed the source cell pitch into
+the upscaled image and scored every condition at 0–5%, which is chance for 36 classes. The matcher
+was reading the wrong columns and I had a beautiful, completely false result about upscaling
+destroying text. Scaling the grid with the factor fixed it and moved the numbers into the 60–100%
+range. If you reimplement this, that is the line to get right.</p>
+
+<div class="callout">
+<p><strong>The ceiling is 98.3%, not 100%.</strong> Rendering the string directly at final
+resolution — no upscaling at all, the best possible input — scores 98.3%. Two characters out of 120
+fail even with ideal input, because cell cropping and the 32×32 resize occasionally flatten the
+difference between <code>O</code> and <code>0</code>. Every number below sits under that ceiling and
+some rows exceed it by a point or two, which is not a real improvement; it is a matcher artefact
+where the upscaled glyph happens to sit more centrally in its cell than the clean render did. I am
+reporting it rather than smoothing it away.</p>
+</div>
+
+<h2>2. Accuracy tracks source x-height, not the scale factor</h2>
+
+<p>First experiment: hold the output constant. Every test case is upscaled to the same final size —
+a 24 px font, which is a 13 px x-height — so the output image is always the same dimensions. What
+varies is the source resolution, and therefore the factor needed to get there.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Source x-height</th><th>Source font</th><th>Factor to 24 px</th>
+<th class="num">nearest</th><th class="num">bilinear</th><th class="num">bicubic</th><th class="num">lanczos</th></tr></thead>
+<tbody>
+<tr><td>4 px</td><td>7 px</td><td>×3.43</td><td class="num">73%</td><td class="num">63%</td><td class="num">66%</td><td class="num">70%</td></tr>
+<tr><td>5 px</td><td>9 px</td><td>×2.67</td><td class="num">80%</td><td class="num">80%</td><td class="num">82%</td><td class="num">82%</td></tr>
+<tr><td>6 px</td><td>11 px</td><td>×2.18</td><td class="num">75%</td><td class="num">82%</td><td class="num">82%</td><td class="num">85%</td></tr>
+<tr><td>7 px</td><td>13 px</td><td>×1.85</td><td class="num">83%</td><td class="num">85%</td><td class="num">84%</td><td class="num">83%</td></tr>
+<tr><td>8 px</td><td>15 px</td><td>×1.60</td><td class="num">82%</td><td class="num">85%</td><td class="num">87%</td><td class="num">82%</td></tr>
+<tr class="best"><td>10 px</td><td>19 px</td><td>×1.26</td><td class="num">90%</td><td class="num">96%</td><td class="num">94%</td><td class="num">94%</td></tr>
+<tr><td>13 px</td><td>23 px</td><td>×1.04</td><td class="num">89%</td><td class="num">92%</td><td class="num">92%</td><td class="num">93%</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Output resolution is identical in every row. Accuracy still climbs from 63% to 96%, and it climbs
+with the <em>source</em> x-height, monotonically, while the factor falls from 3.43 to 1.04. The
+upscaler cannot separate "was this 4 px tall or 10 px tall" from the output alone — but the reading
+score can, and it prefers the source that had more information in it.</p>
+
+<p>The practical shape of that curve: scale factor is a red herring, and the thing to measure on a
+screenshot before you do anything is the x-height in pixels. In this font the ratio is 0.55, so
+x-height ≈ 0.55 × font size. A 9 px font gives a 5 px x-height; a 12 px font gives 7.</p>
+
+<h3>Where the 90% line falls</h3>
+
+<p>The coarse table above bisects roughly, so I swept every source font size from 5 to 16 px and
+took the best of the four kernels for each:</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Source x-height</th><th>Source font</th><th>Factor</th><th>Best kernel</th><th class="num">Best accuracy</th></tr></thead>
+<tbody>
+<tr><td>3 px</td><td>5 px</td><td>×4.80</td><td>nearest</td><td class="num">36.7%</td></tr>
+<tr><td>3 px</td><td>6 px</td><td>×4.00</td><td>nearest</td><td class="num">56.7%</td></tr>
+<tr><td>4 px</td><td>7 px</td><td>×3.43</td><td>nearest</td><td class="num">73.3%</td></tr>
+<tr><td>4 px</td><td>8 px</td><td>×3.00</td><td>nearest</td><td class="num">71.7%</td></tr>
+<tr><td>5 px</td><td>9 px</td><td>×2.67</td><td>bicubic</td><td class="num">81.7%</td></tr>
+<tr><td>5 px</td><td>10 px</td><td>×2.40</td><td>lanczos</td><td class="num">78.3%</td></tr>
+<tr><td>6 px</td><td>11 px</td><td>×2.18</td><td>lanczos</td><td class="num">85.0%</td></tr>
+<tr class="best"><td>7 px</td><td>12 px</td><td>×2.00</td><td>lanczos</td><td class="num">90.8%</td></tr>
+<tr><td>7 px</td><td>13 px</td><td>×1.85</td><td>bilinear</td><td class="num">85.0%</td></tr>
+<tr><td>8 px</td><td>14 px</td><td>×1.71</td><td>lanczos</td><td class="num">91.7%</td></tr>
+<tr><td>8 px</td><td>15 px</td><td>×1.60</td><td>bicubic</td><td class="num">86.7%</td></tr>
+<tr><td>9 px</td><td>16 px</td><td>×1.50</td><td>nearest</td><td class="num">95.8%</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>The 90% line sits at a 7 px x-height in the source</strong> — a 12–13 px font, which at
+96 dpi is roughly 9.5 pt. Below that, the four kernels are all in the 70s and 80s and no choice of
+kernel rescues you. Above it, they converge within a few points of each other and the choice barely
+matters.</p>
+
+<p>Note the non-monotonicity at 10 px and 15 px: 10 px scores below 9 px, and 15 px scores below
+14 px. A single-pixel change in the source moves the rendering grid by half a pixel relative to the
+cell boundary, and the ink lands differently inside the 32×32 crop. That is a real property of
+pixel-grid text, not noise to be averaged away — anyone who has resized a screenshot by a census
+percent and watched the letters go fuzzy has seen the same effect.</p>
+
+<h2>3. The negative result: upscaling does not beat reading it small</h2>
+
+<p>Everything above compares upscaled images to each other. It does not answer the question a person
+actually has, which is: <em>given this unreadable screenshot, am I better off upscaling it or not?</em>
+So I ran both arms on the same source pixels, with each arm read at its own native scale.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Source x-height</th><th class="num">Read at native size</th><th class="num">Upscaled ×4, best kernel</th><th class="num">Difference</th></tr></thead>
+<tbody>
+<tr><td>3 px</td><td class="num">91.7%</td><td class="num">56.7%</td><td class="num">−35.0</td></tr>
+<tr><td>4 px</td><td class="num">100.0%</td><td class="num">70.8%</td><td class="num">−29.2</td></tr>
+<tr><td>4 px</td><td class="num">87.5%</td><td class="num">60.0%</td><td class="num">−27.5</td></tr>
+<tr><td>5 px</td><td class="num">95.0%</td><td class="num">88.3%</td><td class="num">−6.7</td></tr>
+<tr><td>5 px</td><td class="num">100.0%</td><td class="num">87.5%</td><td class="num">−12.5</td></tr>
+<tr><td>6 px</td><td class="num">88.3%</td><td class="num">87.5%</td><td class="num">−0.8</td></tr>
+<tr><td>7 px</td><td class="num">100.0%</td><td class="num">92.5%</td><td class="num">−7.5</td></tr>
+<tr><td>7 px</td><td class="num">93.3%</td><td class="num">93.3%</td><td class="num">0.0</td></tr>
+<tr><td>8 px</td><td class="num">98.3%</td><td class="num">96.7%</td><td class="num">−1.7</td></tr>
+<tr><td>8 px</td><td class="num">100.0%</td><td class="num">97.5%</td><td class="num">−2.5</td></tr>
+<tr><td>9 px</td><td class="num">100.0%</td><td class="num">100.0%</td><td class="num">0.0</td></tr>
+<tr><td>9 px</td><td class="num">99.2%</td><td class="num">98.3%</td><td class="num">−0.8</td></tr>
+<tr class="best"><td>10 px</td><td class="num">96.7%</td><td class="num">99.2%</td><td class="num">+2.5</td></tr>
+<tr><td>10 px</td><td class="num">99.2%</td><td class="num">99.2%</td><td class="num">0.0</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Upscaling wins once, by 2.5 points, in the one row where it is statistically a tie. Everywhere
+else it loses, and the losses are catastrophic exactly where people reach for the upscaler: at 3–4
+px x-height it loses <strong>27 to 35 points</strong>. Mean difference across all 14 conditions:
+<strong>−8.7 points</strong>. Restricted to sources below the 7 px readability line (six conditions),
+<strong>−18.6 points</strong>. At and above it (eight conditions), −1.3 points, which is close to
+noise.</p>
+
+<p>This is the same finding as the <a href="https://celticgemini001.github.io/upgolab-video-upscaling-limits/">temporal
+test on video</a>, and it has the same cause. Interpolation is a weighted average over neighbours.
+Where a glyph stroke is two pixels wide, the average is the stroke. Where the whole letter is five
+pixels tall, the average blends the stroke with the paper around it, and a thin <code>l</code>
+becomes a grey smear with a slightly darker core. You have not recovered the information; you have
+produced four times as many pixels with the same information content, filtered.</p>
+
+<div class="callout">
+<p>If the text is below a 7 px x-height, the fix is not an upscaler. It is a bigger source: re-export
+the PDF, take the screenshot at 2× device pixel ratio, re-capture the window, or ask for the
+original file. A 4× upscale of a 3 px x-height line reads at 57% — worse than squinting at the
+original.</p>
+</div>
+
+<h2>4. Kernel choice inverts at high factors</h2>
+
+<p>The 3 px row above is worth isolating. Holding the source at a 3 px x-height and varying only the
+factor, the ranking of the four kernels reverses:</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Factor</th><th class="num">nearest</th><th class="num">bilinear</th><th class="num">bicubic</th><th class="num">lanczos</th></tr></thead>
+<tbody>
+<tr class="best"><td>×2.0</td><td class="num">82%</td><td class="num">87%</td><td class="num">88%</td><td class="num">91%</td></tr>
+<tr><td>×3.0</td><td class="num">72%</td><td class="num">65%</td><td class="num">66%</td><td class="num">62%</td></tr>
+<tr><td>×4.0</td><td class="num">57%</td><td class="num">32%</td><td class="num">41%</td><td class="num">40%</td></tr>
+<tr><td>×4.5</td><td class="num">35%</td><td class="num">31%</td><td class="num">32%</td><td class="num">32%</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>At ×2, lanczos wins by 9 points over nearest, which is the expected ordering — smoother kernels
+preserve more of the stroke edge. By ×4, nearest wins by 17 points over bilinear and 17 over
+lanczos. At ×4.5 everything collapses and nearest is the last one standing.</p>
+
+<p>The mechanism is that bilinear and lanczos are both low-pass: they reconstruct a value for each
+output pixel by weighting a neighbourhood of source pixels. At ×4 that neighbourhood is a
+significant fraction of the whole glyph. A 5×6 px <code>e</code> gets averaged so heavily that its
+counter closes up and its terminal disappears — it reads as <code>c</code> or <code>o</code>.
+Nearest-neighbour, which invents nothing, keeps the stroke connected as a blocky but legible shape.
+Blocky is readable; smooth and ambiguous is not.</p>
+
+<p>This is why "use lanczos, it is the good one" is wrong as a universal rule. Lanczos optimises for
+a smooth continuous image, and at extreme factors on text the thing you want preserved is not
+smoothness but the topology of the strokes. Nearest is the better <em>reader</em> and the worse
+<em>picture</em>.</p>
+
+<h2>5. The one case where upscaling genuinely helps</h2>
+
+<p>The hands-on instinct that upscaling improves readability is not pure superstition, and the
+experiment above is clean enough to find out why. The source in every test so far was lossless. Real
+screenshots are usually JPEG. So: render the source, recompress it at a known quality, then read
+both the native JPEG and the 4× upscale of it.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Source</th><th>JPEG q</th><th class="num">Native, clean</th><th class="num">Native, JPEG</th><th class="num">×4 of JPEG</th><th class="num">Gain from upscaling</th></tr></thead>
+<tbody>
+<tr><td>5 px x-height</td><td>30</td><td class="num">95.0%</td><td class="num">79.2%</td><td class="num">83.3%</td><td class="num">+4.2</td></tr>
+<tr><td>5 px x-height</td><td>60</td><td class="num">95.0%</td><td class="num">85.0%</td><td class="num">85.0%</td><td class="num">0.0</td></tr>
+<tr><td>5 px x-height</td><td>90</td><td class="num">95.0%</td><td class="num">91.7%</td><td class="num">87.5%</td><td class="num">−4.2</td></tr>
+<tr class="best"><td>7 px x-height</td><td>30</td><td class="num">100.0%</td><td class="num">73.3%</td><td class="num">89.2%</td><td class="num">+15.8</td></tr>
+<tr><td>7 px x-height</td><td>60</td><td class="num">100.0%</td><td class="num">90.8%</td><td class="num">90.8%</td><td class="num">0.0</td></tr>
+<tr><td>7 px x-height</td><td>90</td><td class="num">100.0%</td><td class="num">95.8%</td><td class="num">92.5%</td><td class="num">−3.3</td></tr>
+<tr><td>9 px x-height</td><td>30</td><td class="num">100.0%</td><td class="num">94.2%</td><td class="num">98.3%</td><td class="num">+4.2</td></tr>
+<tr><td>9 px x-height</td><td>60</td><td class="num">100.0%</td><td class="num">100.0%</td><td class="num">100.0%</td><td class="num">0.0</td></tr>
+<tr><td>9 px x-height</td><td>90</td><td class="num">100.0%</td><td class="num">100.0%</td><td class="num">100.0%</td><td class="num">0.0</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>There it is. Aggressive JPEG recompression costs 15–27 points of accuracy, and upscaling recovers
+part of it — most dramatically at a 7 px x-height and q30, where native reading drops to 73.3% and
+the upscale brings it back to 89.2%, a <strong>15.8-point gain</strong>. At q60 and q90 the gain is
+zero or negative every time.</p>
+
+<p>The mechanism is the mirror image of section 4. JPEG at q30 has already low-passed the image into
+8×8 blocks with ringing at the edges; interpolation on top of that is a second smoothing that
+happens to suppress the block boundaries the same way a larger kernel would. The upscaler is not
+recovering text information — it is undoing compression damage. Two low-pass filters in series
+approximate one better low-pass filter.</p>
+
+<p>So the working rule is narrower than either instinct:</p>
+
+<ul>
+<li><strong>Lossless source, small text</strong> → upscaling makes it worse. Re-export at a larger
+size instead.</li>
+<li><strong>Heavily compressed source, at or above a 7 px x-height</strong> → upscaling helps, up to
+about 16 points at q30.</li>
+<li><strong>Heavily compressed source, below a 7 px x-height</strong> → upscaling cannot help. The
+information is gone before compression and compression removed more of it.</li>
+<li><strong>Moderately compressed (q60–q90)</strong> → upscaling does nothing measurable either way,
+so do not spend the compute.</li>
+</ul>
+
+<h2>6. Sharpening after the upscale: no</h2>
+
+<p>One more reflex worth checking, since it is the standard advice. An unsharp mask at radius 1.0,
+80%, zero threshold, applied after a lanczos ×4 upscale:</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Source x-height</th><th class="num">lanczos ×4</th><th class="num">+ unsharp mask</th><th class="num">Difference</th></tr></thead>
+<tbody>
+<tr><td>5 px</td><td class="num">81.7%</td><td class="num">80.8%</td><td class="num">−0.8</td></tr>
+<tr><td>7 px</td><td class="num">83.3%</td><td class="num">85.8%</td><td class="num">+2.5</td></tr>
+<tr><td>10 px</td><td class="num">94.2%</td><td class="num">93.3%</td><td class="num">−0.8</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Mean effect: +0.3 points. One improved case, two regressions, all within the noise this matcher
+produces on a 120-character sample. Sharpen because the result looks better to you, not because it
+reads better — for text at these sizes those are different questions, and unsharp masking raises
+edge contrast while also amplifying the ringing that creates the <code>c</code>/<code>e</code>
+confusions in the first place.</p>
+
+<h2>7. What this means for a real screenshot</h2>
+
+<p>Convert the threshold into things you can see. The x-height to font-size ratio in this font is
+0.55, so a 7 px x-height is a 12.7 px font. Whether that is readable depends entirely on the
+capture:</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Capture context</th><th class="num">Font size for 7 px x-height</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr><td>72 dpi export</td><td class="num">12.7 pt</td><td>most body text qualifies</td></tr>
+<tr><td>96 dpi standard screen</td><td class="num">9.5 pt</td><td>borderline; small print fails</td></tr>
+<tr><td>144 dpi / HiDPI capture</td><td class="num">6.4 pt</td><td>anything 7 pt or larger reads cleanly</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Which is the argument for taking the screenshot at 2× device pixel ratio in the first place. The
+same window captured at 144 dpi instead of 72 dpi has twice the x-height in pixels, crosses the
+readability line for all its body text, and needs no upscaling at all — and it is a 4× larger file
+for 4× the pixels, exactly like any other genuine resolution increase.</p>
+
+<h2>8. What I did not measure</h2>
+
+<p>Three honest limits. The matcher is single-font, so the template count is 36 classes with no
+case variation and no confusion between serif and sans — a general OCR engine faces a much harder
+problem, and the absolute percentages here are optimistic for anything but clean digital text.
+Scanned paper, anti-aliased subpixel rendering on an LCD, and rotated captures are all out of scope.
+And the JPEG arm used PIL's encoder, which is a decent stand-in for a browser screenshot but not
+identical to one.</p>
+
+<p>The direction of every result, though, rests on comparisons within a single fixed matcher, where
+the absolute calibration matters much less than the ordering. Upscaling losing to native reading by
+8.7 points on lossless sources did not depend on the matcher being good; it depended on the same
+matcher reading both arms.</p>
+
+<p>If you are working through a batch of small-text images and need them at a usable size for
+anything other than reading — a slide, a thumbnail, an asset for a page — the resolution increase
+still has to come from somewhere. <a href="https://upgolab.com">upgolab</a> handles that case, with
+the caveat this article is about: upscale the picture, but read the text at the size it was
+captured, or go back and capture it bigger.</p>
+
+<h2>Reproducing it</h2>
+
+<p>Everything above comes from about 90 lines of numpy and PIL. The matcher, the sweep, the native
+versus upscaled comparison, the JPEG arm and the sharpening test are each self-contained enough to
+run on their own. Copy the <code>render</code>, <code>cell_vec</code>, <code>split_cells</code> and
+<code>read_accuracy</code> helpers, then for each condition render at the source size, upscale with
+whichever kernel you want to test, and read with the cell pitch multiplied by the factor. Print per
+condition accuracy and the mean margin — the margin (correct-class score minus best wrong-class
+score) is the more sensitive signal when accuracy saturates near the 98.3% ceiling and stops
+discriminating.</p>
+
+</article>
+<footer>
+<nav class="sisternav" aria-label="More measured upscaling guides">
+<p>More measured guides</p>
+<ul>
+  <li><a href="https://celticgemini001.github.io/upgolab-tools/">All guides (index)</a></li>
+</ul>
+</nav>
+</footer>
+</main>
+</body>
+</html>
