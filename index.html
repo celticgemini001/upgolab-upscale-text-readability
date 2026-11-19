@@ -15,7 +15,7 @@
  "author":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
  "publisher":{"@type":"Organization","name":"UpgoLAB","url":"https://upgolab.com"},
  "datePublished":"2026-11-18",
- "dateModified":"2026-11-18",
+ "dateModified":"2026-11-19",
  "mainEntityOfPage":"https://celticgemini001.github.io/upgolab-upscale-text-readability/"}
 </script>
 <style>
@@ -499,7 +499,206 @@ artefact that was never carrying information a reader could use.</p>
 <code>cell_vec</code> and <code>read_accuracy</code> helpers from §2, with templates rendered at
 the target size rather than at the source size. The full sweep is under a second per size.</p>
 
-<h2>9. What I did not measure</h2>
+<h2>9. Contrast: the constraint nobody in this article had measured</h2>
+
+<p>Sections 2 through 8 all treated the text as a black-on-white pattern. Every number in them was
+measured at a contrast ratio of 21:1 — the maximum — because that is what rendering a glyph at value
+0 on value 255 gives you. Real captures are not like that. A screenshot of grey UI text, a photo of a
+label, a scan of a faint print job: all of them arrive with ink that is nowhere near black, and the
+question "will upscaling make this readable" has a different answer for each.</p>
+
+<p>So I ran the same 36-class matcher over a contrast sweep. Same font, same 120-character strings,
+same three seeds averaged. Only the ink value changes; the geometry does not move at all. The scale
+factor stays at ×4, which is the factor §2 already established as the poor choice at a 7 px x-height.
+This section is not about the factor.</p>
+
+<h3>9.1 The sweep at a 7 px x-height</h3>
+
+<p>Contrast ratios are computed the standard way — sRGB relative luminance per channel, then
+<code>(L1 + 0.05) / (L2 + 0.05)</code> against a 255 background — so the middle column can be compared
+directly with an accessibility checker.</p>
+
+<table>
+<thead><tr><th class="num">Ink value</th><th class="num">Contrast</th><th class="num">Read native</th><th class="num">Read after ×4</th><th class="num">Gain from ×4</th></tr></thead>
+<tbody>
+<tr><td class="num">0</td><td class="num">21.00</td><td class="num">98.9%</td><td class="num">100.0%</td><td class="num">+1.1</td></tr>
+<tr><td class="num">60</td><td class="num">11.03</td><td class="num">97.5%</td><td class="num">99.7%</td><td class="num">+2.2</td></tr>
+<tr><td class="num">90</td><td class="num">6.90</td><td class="num">93.1%</td><td class="num">96.7%</td><td class="num">+3.6</td></tr>
+<tr><td class="num">110</td><td class="num">5.10</td><td class="num">83.3%</td><td class="num">89.2%</td><td class="num">+5.8</td></tr>
+<tr><td class="num">130</td><td class="num">3.84</td><td class="num">66.9%</td><td class="num">69.7%</td><td class="num">+2.8</td></tr>
+<tr><td class="num">150</td><td class="num">2.96</td><td class="num">49.2%</td><td class="num">50.0%</td><td class="num">+0.8</td></tr>
+<tr><td class="num">165</td><td class="num">2.46</td><td class="num">38.9%</td><td class="num">45.0%</td><td class="num">+6.1</td></tr>
+<tr><td class="num">180</td><td class="num">2.07</td><td class="num">30.6%</td><td class="num">35.6%</td><td class="num">+5.0</td></tr>
+<tr><td class="num">195</td><td class="num">1.76</td><td class="num">24.2%</td><td class="num">26.1%</td><td class="num">+1.9</td></tr>
+<tr><td class="num">210</td><td class="num">1.51</td><td class="num">15.3%</td><td class="num">23.9%</td><td class="num">+8.6</td></tr>
+<tr><td class="num">225</td><td class="num">1.31</td><td class="num">10.0%</td><td class="num">10.0%</td><td class="num">0.0</td></tr>
+<tr><td class="num">240</td><td class="num">1.14</td><td class="num">6.7%</td><td class="num">6.7%</td><td class="num">0.0</td></tr>
+<tr><td class="num">250</td><td class="num">1.04</td><td class="num">6.7%</td><td class="num">6.7%</td><td class="num">0.0</td></tr>
+</tbody>
+</table>
+
+<p>Two things are worth pulling out of that table. The first is the size of the effect: moving the ink
+from 0 to 130 costs 32 points of accuracy at <em>identical</em> geometry — same glyphs, same x-height,
+same pitch, same matcher. Compare that to the 8.7 points that §3 found for the entire upscale-or-not
+decision. At the x-heights this article is about, contrast is roughly four times more expensive than
+resolution.</p>
+
+<p>The second is that the ×4 arm cannot pay it back. The gain from upscaling wanders between 0.0 and
++8.6 points with no trend that survives the noise, and at 1.04:1 both arms collapse to the 6.7% floor
+that is just the base rate for a 36-class guesser hitting a repeating string. There is no contrast
+value at which upscaling is the thing that rescues the line. It never is, and the reason is structural:
+interpolation is a weighted average. Averaging a stroke at 180 against a paper at 255 produces a
+mixture that is, by construction, still at 180 against 255 — the ratio is preserved, the estimator just
+gets a slightly smoother version of the same evidence.</p>
+
+<h3>9.2 Where WCAG lands on this scale</h3>
+
+<p>Since the contrast ratio is the one number every accessibility tool reports, it is worth asking
+where the published thresholds fall in character-accuracy terms. WCAG 2.1 sets 3:1 for large text,
+4.5:1 for normal text, and 7:1 for AAA. Resolving each threshold to the nearest ink value and running
+the matcher:</p>
+
+<table>
+<thead><tr><th class="num">x-height</th><th>Threshold</th><th class="num">Contrast</th><th class="num">Read native</th><th class="num">Read after ×4</th></tr></thead>
+<tbody>
+<tr><td class="num">5 px</td><td>AA large (3:1)</td><td class="num">3.00</td><td class="num">37.2%</td><td class="num">40.6%</td></tr>
+<tr><td class="num">5 px</td><td>AA (4.5:1)</td><td class="num">4.48</td><td class="num">65.0%</td><td class="num">63.9%</td></tr>
+<tr><td class="num">5 px</td><td>AAA (7:1)</td><td class="num">7.00</td><td class="num">90.6%</td><td class="num">89.2%</td></tr>
+<tr><td class="num">7 px</td><td>AA large (3:1)</td><td class="num">3.00</td><td class="num">50.0%</td><td class="num">50.3%</td></tr>
+<tr><td class="num">7 px</td><td>AA (4.5:1)</td><td class="num">4.48</td><td class="num">75.8%</td><td class="num">76.9%</td></tr>
+<tr><td class="num">7 px</td><td>AAA (7:1)</td><td class="num">7.00</td><td class="num">93.1%</td><td class="num">97.2%</td></tr>
+<tr><td class="num">10 px</td><td>AA (4.5:1)</td><td class="num">4.48</td><td class="num">86.9%</td><td class="num">91.1%</td></tr>
+<tr><td class="num">10 px</td><td>AAA (7:1)</td><td class="num">7.00</td><td class="num">94.7%</td><td class="num">99.7%</td></tr>
+<tr><td class="num">13 px</td><td>AA (4.5:1)</td><td class="num">4.48</td><td class="num">88.3%</td><td class="num">97.5%</td></tr>
+<tr><td class="num">13 px</td><td>AAA (7:1)</td><td class="num">7.00</td><td class="num">98.3%</td><td class="num">100.0%</td></tr>
+</tbody>
+</table>
+
+<p>Read the middle rows. Text that passes AA at a 7 px x-height reads at 75.8% character accuracy —
+one character in four wrong, which for a serial number or a URL is not a pass. Text that passes AAA at
+the same size reads at 93.1%. On this matcher, <strong>AAA is approximately the 90% line and AA is
+below it</strong>, and at a 5 px x-height even AAA only gets to 90.6%.</p>
+
+<p>None of that is a criticism of WCAG, and it should not be quoted as one. The success criteria are
+about whether a person of ordinary vision can <em>perceive</em> text, and they assume the reader can
+zoom, reflow, or simply read a word from its shape and its sentence. This matcher has neither
+knowledge; it identifies glyphs one at a time out of an alphabet of 36 with no language model behind
+it. The correspondence above is a measured numerical coincidence at one particular x-height, useful
+because it gives an intuitive anchor for the sweep, not because it overrules the standard. What it does
+say honestly is that "passes AA" and "will survive being captured at small size and read back by a
+machine" are not the same claim, and the second one is what OCR has to satisfy.</p>
+
+<h3>9.3 The fix that works, and the reason it is not a fix</h3>
+
+<p>The obvious remedy for low contrast costs no upscaler at all: min-max normalisation, or
+"auto-levels". Find the darkest and lightest pixel, stretch the range to 0–255, done. On a text crop it
+is devastatingly effective. At a 7 px x-height with the ink at 130, native accuracy is 66.9%; after a
+levels stretch the same pixels read at <strong>98.9%</strong>. A 32-point recovery from four lines of
+numpy, where a ×4 upscale of the identical crop bought 2.8.</p>
+
+<p>I nearly wrote that up as the finding of the section. Then I checked it against a screenshot that
+was not a crop.</p>
+
+<p>The mechanism is trivial once stated: min-max normalisation does not know where the text is. It
+normalises against the darkest pixel <em>in the frame it was given</em>. Feed it a crop of nothing but
+text and the darkest pixel is the core of a stroke, so the stretch recovers exactly the contrast the
+renderer had thrown away — it is close to the mathematical inverse of the step that degraded the image,
+which is why it comes back at 98.9% rather than 80%. Feed it a screenshot, and the darkest pixel is
+whatever else is on the screen: a button, an icon, a bold heading, a photo. The glyphs no longer
+contain the frame's minimum, so the stretch does nothing for them at all.</p>
+
+<p>Measured, with the stretch applied to the full frame and the matcher reading only the text band:</p>
+
+<table>
+<thead><tr><th class="num">x-height</th><th>Rest of the frame</th><th class="num">Read native</th><th class="num">Read after stretch</th><th class="num">Read after ×4</th></tr></thead>
+<tbody>
+<tr><td class="num">5 px</td><td>nothing — text only</td><td class="num">9.2%</td><td class="num">99.2%</td><td class="num">11.7%</td></tr>
+<tr><td class="num">5 px</td><td>one dark button</td><td class="num">3.3%</td><td class="num">3.3%</td><td class="num">3.3%</td></tr>
+<tr><td class="num">5 px</td><td>a photo</td><td class="num">3.3%</td><td class="num">3.3%</td><td class="num">3.3%</td></tr>
+<tr><td class="num">7 px</td><td>nothing — text only</td><td class="num">23.6%</td><td class="num">98.9%</td><td class="num">25.0%</td></tr>
+<tr><td class="num">7 px</td><td>one dark button</td><td class="num">5.6%</td><td class="num">5.6%</td><td class="num">6.7%</td></tr>
+<tr><td class="num">7 px</td><td>a photo</td><td class="num">3.3%</td><td class="num">3.3%</td><td class="num">6.9%</td></tr>
+<tr><td class="num">10 px</td><td>nothing — text only</td><td class="num">14.2%</td><td class="num">100.0%</td><td class="num">18.1%</td></tr>
+<tr><td class="num">10 px</td><td>one dark button</td><td class="num">3.3%</td><td class="num">3.3%</td><td class="num">6.9%</td></tr>
+<tr><td class="num">10 px</td><td>a photo</td><td class="num">3.3%</td><td class="num">3.3%</td><td class="num">8.6%</td></tr>
+</tbody>
+</table>
+
+<p>The stretch column is identical to the native column to the decimal in every row where the frame
+contains anything dark. Not approximately equal — equal, because the transform is the identity on the
+text band once the frame's minimum sits outside it. The 99.2% in the first row is real, and it is
+unreachable in practice, because producing that crop requires having already located the text and
+already decided how much margin it needs. If you knew that much, you would not be asking whether an
+upscaler can read it.</p>
+
+<p>Note also that the per-frame normalisation is fragile by construction rather than merely
+inconvenient. One saturated pixel anywhere in the image — a specular highlight at 255, a single dead
+black pixel in a border — sets the range for the whole frame. There are adaptive variants that fix
+this by normalising against a local background estimate rather than the frame, and they do help on
+graded backgrounds, but they reintroduce the same question at a smaller radius: the window has to be
+bigger than a stroke and smaller than the layout, and choosing it is exactly the decision you were
+trying to avoid making by hand.</p>
+
+<h3>9.4 What this changes about the rest of the page</h3>
+
+<p>It does not overturn anything measured in §2–§8; those comparisons were all made inside a single
+matcher at a single contrast, so the ordering holds. What it changes is the priority. The article has
+spent seven sections on kernel choice, scale factor, sharpening and JPEG, all of which move accuracy
+by single digits or low tens of points, and none of which can do anything once the ink is at 130. If a
+captured line will not read, the first thing to check is not the factor and not the kernel. It is
+whether the ink was ever dark enough to resolve at that x-height, which the sweep in §9.1 puts at
+roughly 6.9:1 for a 7 px x-height and 4.5:1 for 10 px and above.</p>
+
+<p>And if it was not, there is no cheap fix at any scale factor. A bigger source — re-export, re-shoot,
+re-scan at a real resolution rather than an interpolated one — remains the only arm in this entire
+article that moved a line from unreadable to readable across every condition tested.</p>
+
+<pre><code>import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+FONT  = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+
+def srgb_lin(c):
+    c = np.asarray(c, float) / 255.0
+    return np.where(c &lt;= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+def contrast(fg, bg=255):
+    a, b = srgb_lin(fg), srgb_lin(bg)
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+def render_line(text, size, ink=0, paper=255, pad=3):
+    f = ImageFont.truetype(FONT, size)
+    asc, desc = f.getmetrics()
+    pitch = f.getlength("A")
+    w = int(np.ceil(pitch * len(text))) + 2 * pad
+    im = Image.new("L", (w, asc + desc + 2 * pad), paper)
+    ImageDraw.Draw(im).text((pad, pad), text, font=f, fill=ink, anchor="la")
+    return np.asarray(im).astype(float), pitch, pad
+
+def stretch(a):                       # min-max auto-levels over the WHOLE frame
+    lo, hi = a.min(), a.max()
+    return a.copy() if hi - lo &lt; 1e-6 else np.clip((a - lo) * 255.0 / (hi - lo), 0, 255)
+
+# the sweep in 9.1: vary ink, hold everything else.
+# 16 characters here, so the percentages are coarser than the 120-character
+# table above -- the ordering and the flat stretch column are what matter.
+for ink in (0, 90, 130, 165, 195, 225):
+    g, pitch, pad = render_line("THEQUICKBROWNFOX", 13, ink=ink)
+    print(f"{contrast(ink):5.2f}:1  {ink:3d}  "
+          f"native {read_shifted(g, pitch, pad, TD):5.1f}%")
+    # and the same band with one black pixel anywhere in frame:
+    g2 = g.copy(); g2[0, 0] = 0
+    print(f"          after stretch {read_shifted(stretch(g2), pitch, pad, TD):5.1f}%")</code></pre>
+
+<p>The only function not shown is <code>read_shifted</code>, which is the §2 matcher with a
+±3 px positional search added per cell. That search matters for this section: without it, the
+upscaled arm lands on a different sub-pixel phase at some font sizes and loses ten points to the crop
+offset rather than to the resampling, which is a bug I hit and had to fix before any of the ×4 numbers
+above were trustworthy. The control that caught it was running both arms at ink 0 and requiring them
+to agree, since at full contrast an upscale has nothing to do.</p>
+
+<h2>10. What I did not measure</h2>
 
 <p>Three honest limits. The matcher is single-font, so the template count is 36 classes with no
 case variation and no confusion between serif and sans — a general OCR engine faces a much harder
